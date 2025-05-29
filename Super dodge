@@ -1,0 +1,39 @@
+    alienSpeed = ALIEN_SPEED_START;
+    spawnInterval = SPAWN_INTERVAL_START;
+    aliens = [];
+    gameOver = false;
+    gameOverScreen.style.display = 'none';
+    lastSpawn = performance.now();
+    lastFrameTime = 0;
+    heroX = (canvas.width - HERO_WIDTH) / 2;
+    requestAnimationFrame(gameLoop);
+  }
+
+  // RoundRect support for canvas
+  CanvasRenderingContext2D.prototype.roundRect = function (x, y, w, h, r) {
+    if (w < 2 * r) r = w / 2;
+    if (h < 2 * r) r = h / 2;
+    this.beginPath();
+    this.moveTo(x + r, y);
+    this.arcTo(x + w, y, x + w, y + h, r);
+    this.arcTo(x + w, y + h, x, y + h, r);
+    this.arcTo(x, y + h, x, y, r);
+    this.arcTo(x, y, x + w, y, r);
+    this.closePath();
+    return this;
+  }
+
+  // Initialize hero position
+  heroX = (canvas.width - HERO_WIDTH) / 2;
+
+  // Event listeners
+  canvas.addEventListener('mousemove', onPointerMove);
+  canvas.addEventListener('touchmove', onPointerMove, { passive: false });
+  restartBtn.addEventListener('click', restartGame);
+
+  // Start game loop
+  requestAnimationFrame(gameLoop);
+})();
+</script>
+</body>
+</html>
