@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<title>Mobile Dodge Game</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Orbitron&display=swap');
+  html, body {
+    margin: 0; padding: 0; height: 100%;
+    background: linear-gradient(135deg, #09090f, #3a3a4d);
+    font-family: 'Orbitron', monospace;
+    color: #ffffff;
+    overflow: hidden;
+    -webkit-tap-highlight-color: transparent;
+    user-select: none;
+  }
+  #gameContainer {
+    position: relative;
+    width: 100vw;
+    height: 100vh;
+  }
+  canvas {
+    display: block;
+    background: #16162b;
+    margin: 0 auto;
+    border-radius: 15px;
+    box-shadow: 0 0 20px #3a3a4d;
+    touch-action: none;
+  }
+  #score {
+    position: absolute;
+    top: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 2rem;
+    font-weight: bold;
+    text-shadow: 0 0 8px #f0f0f0, 0 0 12px #0ff;
+  }
+  #gameOverScreen {
+    position: absolute;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    background: rgba(25, 25, 40, 0.9);
+    border-radius: 20px;
+    padding: 30px 40px;
+    text-align: center;
+    display: none;
+    box-shadow: 0 0 30px #0ff;
+  }
+  #gameOverScreen h1 {
+    margin: 0 0 20px;
+    font-size: 3rem;
+    color: #0ff;
+    text-shadow: 0 0 15px #0ff;
+  }
+  #gameOverScreen button {
+    background: #0ff;
+    border: none;
+    border-radius: 10px;
+    padding: 15px 30px;
+    font-size: 1.5rem;
+    cursor: pointer;
+    color: #16162b;
+    font-weight: bold;
+    transition: background 0.3s ease;
+  }
+  #gameOverScreen button:hover {
+    background: #06c6c6;
+  }
+  .footerCredit {
+    position: absolute;
+    bottom: 10px;
+    width: 100%;
+    text-align: center;
+    color: #444866;
+    font-size: 0.85rem;
+    font-style: italic;
+    user-select: none;
+  }
+</style>
+</head>
+<body>
+<div id="gameContainer">
+  <canvas id="gameCanvas" width="360" height="640"></canvas>
+  <div id="score">Score: 0</div>
+  <div id="gameOverScreen">
+    <h1>Game Over</h1>
+    <div id="finalScore"></div>
+    <button id="restartBtn">Restart</button>
+  </div>
+  <div class="footerCredit">Move the paddle left/right to dodge the falling blocks</div>
+</div>
+
+<script>
+(() => {
+  const canvas = document.getElementById('gameCanvas');
+  const ctx = canvas.getContext('2d');
+  const scoreEl = document.getElementById('score');
+  const gameOverScreen = document.getElementById('gameOverScreen');
+  const finalScoreEl = document.getElementById('finalScore');
+  const restartBtn = document.getElementById('restartBtn');
+
+  // Resize canvas to fill viewport while maintaining game resolution scale
+  function resizeCanvas() {
+    const scale = Math.min(window.innerWidth / 360, window.innerHeight / 640);
+    canvas.style.width = 360 * scale + 'px';
+    canvas.style.height = 640 * scale + 'px';
+  }
+  window.addEventListener('resize', resizeCanvas);
+  resizeCanvas();
+
+  // Game constants
+  const PADDLE_WIDTH = 80;
+  const PADDLE_HEIGHT = 12;
+  const PADDLE_Y_OFFSET = 30;
+  const BLOCK_SIZE = 40;
+  const BLOCK_SPEED_START = 2;
+  const BLOCK_SPEED_INCREMENT = 0.015;
+  const SPAWN_INTERVAL_START = 1500; // in ms
+  const SPAWN_INTERVAL_DECREMENT = 15; // ms decrement per score
+
+  // Game variables
+  let paddleX = 140;
+  let blocks = [];
+  let lastSpawn = 0;
+  let spawnInterval = SPAWN_INTERVAL_START;
+  let blockSpeed = BLOCK_SPEED_START;
+  let score = 0;
+  let gameOver = false;
+  let lastFrameTime = 0;
+
+  // Input state
+  let pointerX = null;
+
+  // Paddle drawing with gradient
+  function drawPaddle(x) {
+    const gradient = ctx.createLinearGradient(x, canvas.height - PADDLE_Y_OFFSET, x + PADDLE_WIDTH, canvas.height - PADDLE_Y_OFFSET);
+    gradient.addColorStop(0, '#00fff7');
+    gradient.addColorStop(1, '#006f8a');
+    ctx.fillStyle = gradient;
+    ctx.shadowColor = '#00fff7';
+    ctx.shadowBlur = 10;
+    
+    ctx.beginPath();
+    ctx.moveTo(x + 10, canvas.height - PADDLE_Y_OFFSET);
+    ctx.quadraticCurveTo(x + PADDLE_WIDTH / 2, canvas.height - PADDLE_Y_OFFSET - 25, x + PADDLE_WIDTH - 10, canvas.height - PADDLE_Y_OFFSET);
+    ctx.lineTo(x + PADDLE_WIDTH - 10, canvas.height - PADDLE_Y_OFFSET + PADDLE_HEIGHT);
+    ctx.lineTo(x + 10, canvas.height - PADDLE_Y_OFFSET + PADDLE_HEIGHT);
+    ctx.closePath();
+    ctx.fill();
+    ctx.shadowBlur = 0;
+  }
+
+  // Block object
+  class Block {
+    constructor(x, y, speed) {
+      this.x = x;
+      this.y = y;
+      this.speed = speed;
+      this.size = BLOCK_SIZE;
+      this.color = `hsl(${Math.random() * 360}, 70%, 60%)`;
+    }
+    update(dt) {
+      this.y += this.speed * dt;
+    }
+    draw() {
+      ctx.fillStyle = this.color;
+      ctx.shadowColor = this.color;
+      ctx.shadowBlur = 10;
+      ctx.beginPath();
+      ctx.roundRect(this.x, this.y, this.size, this.size, 6);
+      ctx.fill();
+      ctx.shadowBlur = 0;
+    }
+  }
+
+  // Helper: collision detection between paddle and block
+  function hitTestRect(r1, r2) {
+    return !(r2.x > r1.x + r1.width || 
+            r2.x + r2.width < r1.x || 
+            r2.y > r1.y + r1.height ||
+            r2.y + r2.height < r1.y);
+  }
+
+  // Generate new block at random x position at top
+  function spawnBlock() {
+    const x = Math.random() * (canvas.width - BLOCK_SIZE);
+    const b = new Block(x, -BLOCK_SIZE, blockSpeed);
+    blocks.push(b);
+  }
+
+  // Update game state
+  function update(delta) {
+    if (gameOver) return;
+
+    // Update blocks
+    for (let i = blocks.length - 1; i >= 0; i--) {
+      blocks[i].update(delta);
+      if (blocks[i].y > canvas.height) {
+        blocks.splice(i, 1);
+        score++;
+        // Increase difficulty
+        blockSpeed += BLOCK_SPEED_INCREMENT;
+        spawnInterval = Math.max(400, SPAWN_INTERVAL_START - score * SPAWN_INTERVAL_DECREMENT);
+      }
+    }
+
+    // Collision detection
+    const paddleRect = {
+      x: paddleX, 
+      y: canvas.height - PADDLE_Y_OFFSET, 
+      width: PADDLE_WIDTH, 
+      height: PADDLE_HEIGHT
+    };
+    for (const block of blocks) {
+      const blockRect = { x: block.x, y: block.y, width: block.size, height: block.size };
+      if (hitTestRect(paddleRect, blockRect)) {
+        endGame();
+        break;
+      }
+    }
+
+    // Spawn blocks
+    if (performance.now() - lastSpawn > spawnInterval) {
+      spawnBlock();
+      lastSpawn = performance.now();
+    }
+
+    scoreEl.textContent = `Score: ${score}`;
+  }
+
+  // Draw everything
+  function draw() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    // Draw paddle
+    drawPaddle(paddleX);
+
+    // Draw blocks
+    for (const block of blocks) {
+      block.draw();
+    }
+  }
+
+  // Game loop with time delta for smooth animation
+  function gameLoop(timestamp) {
+    if (!lastFrameTime) lastFrameTime = timestamp;
+    const delta = (timestamp - lastFrameTime) / 16.67; // normalize to 60fps base
+    lastFrameTime = timestamp;
+
+    update(delta);
+    draw();
+
+    if (!gameOver) {
+      requestAnimationFrame(gameLoop);
+    }
+  }
+
+  // Handle input - mouse/touch movement
+  function onPointerMove(event) {
+    const rect = canvas.getBoundingClientRect();
+    let clientX;
+    if (event.touches) {
+      clientX = event.touches[0].clientX;
+    } else {
+      clientX = event.clientX;
+    }
+    let x = (clientX - rect.left) * (canvas.width / rect.width);
+    paddleX = Math.min(Math.max(0, x - PADDLE_WIDTH / 2), canvas.width - PADDLE_WIDTH);
+  }
+
+  // Game over handler
+  function endGame() {
+    gameOver = true;
+    finalScoreEl.textContent = `Your score: ${score}`;
+    gameOverScreen.style.display = 'block';
+  }
+
+  // Restart game
+  function restartGame() {
+    score = 0;
+    blockSpeed = BLOCK_SPEED_START;
+    spawnInterval = SPAWN_INTERVAL_START;
+    blocks = [];
+    gameOver = false;
+    gameOverScreen.style.display = 'none';
+    lastSpawn = performance.now();
+    lastFrameTime = 0;
+    paddleX = (canvas.width - PADDLE_WIDTH) / 2;
+    requestAnimationFrame(gameLoop);
+  }
+
+  // Add rounding support for rectangle (for block shape)
+  CanvasRenderingContext2D.prototype.roundRect = function (x, y, w, h, r) {
+    if (w < 2 * r) r = w / 2;
+    if (h < 2 * r) r = h / 2;
+    this.beginPath();
+    this.moveTo(x + r, y);
+    this.arcTo(x + w, y, x + w, y + h, r);
+    this.arcTo(x + w, y + h, x, y + h, r);
+    this.arcTo(x, y + h, x, y, r);
+    this.arcTo(x, y, x + w, y, r);
+    this.closePath();
+    return this;
+  }
+
+  // Init paddle position center bottom
+  paddleX = (canvas.width - PADDLE_WIDTH) / 2;
+
+  // Event listeners
+  canvas.addEventListener('mousemove', onPointerMove);
+  canvas.addEventListener('touchmove', onPointerMove, { passive: false });
+  restartBtn.addEventListener('click', restartGame);
+
+  // Start the game loop
+  requestAnimationFrame(gameLoop);
+})();
+</script>
+</body>
+</html>
